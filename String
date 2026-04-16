@@ -1,0 +1,271 @@
+#include <cstring>
+#include <iostream>
+
+template<typename T>
+class MyAllocator {
+public:
+    T* allocate(size_t n) {
+        return static_cast<T*>(::operator new(n * sizeof(T)));
+    }
+
+    void deallocate(T* p, size_t) {
+        ::operator delete(p);
+    }
+
+    template<typename U, typename... Args>
+    void construct(U* p, Args&&... args) {
+        new (p) U(std::forward<Args>(args)...);
+    }
+
+    template<typename U>
+    void destroy(U* p) {
+        p->~U();
+    }
+};
+
+
+class MyString {
+private:
+    MyAllocator<char> alloc;
+    size_t size_;
+    size_t capacity_;
+    char* data;
+
+    void reallocate(size_t newCapacity) {
+        char* newData = alloc.allocate(newCapacity + 1);
+
+        for (size_t i = 0; i < size_; i++) {
+            alloc.construct(newData + i, data[i]);
+        }
+
+        alloc.construct(newData + size_, '\0');
+
+        if (data) {
+            for (size_t i = 0; i < size_ + 1; i++) {
+                alloc.destroy(data + i);
+            }
+            alloc.deallocate(data, capacity_ + 1);
+        }
+
+        data = newData;
+        capacity_ = newCapacity;
+    }
+
+public:
+    // ---------------- constructors ----------------
+
+    MyString()
+        : size_(0), capacity_(0), data(nullptr) {}
+
+    MyString(const char* str) {
+        if (!str) {
+            size_ = 0;
+            capacity_ = 0;
+            data = nullptr;
+            return;
+        }
+
+        size_ = std::strlen(str);
+        capacity_ = size_;
+
+        data = alloc.allocate(capacity_ + 1);
+
+        for (size_t i = 0; i < size_; i++) {
+            alloc.construct(data + i, str[i]);
+        }
+
+        alloc.construct(data + size_, '\0');
+    }
+
+    MyString(const MyString& other)
+        : size_(other.size_), capacity_(other.capacity_)
+    {
+        if (capacity_ == 0) {
+            data = nullptr;
+            return;
+        }
+
+        data = alloc.allocate(capacity_ + 1);
+
+        for (size_t i = 0; i < size_; i++) {
+            alloc.construct(data + i, other.data[i]);
+        }
+
+        alloc.construct(data + size_, '\0');
+    }
+
+    // ---------------- assignment ----------------
+
+    MyString& operator=(const MyString& other) {
+        if (this == &other) return *this;
+
+        char* newData = nullptr;
+
+        if (other.size_ > 0) {
+            newData = alloc.allocate(other.capacity_ + 1);
+
+            for (size_t i = 0; i < other.size_; i++) {
+                alloc.construct(newData + i, other.data[i]);
+            }
+
+            alloc.construct(newData + other.size_, '\0');
+        }
+
+        if (data) {
+            for (size_t i = 0; i < size_ + 1; i++) {
+                alloc.destroy(data + i);
+            }
+            alloc.deallocate(data, capacity_ + 1);
+        }
+
+        data = newData;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+
+        return *this;
+    }
+
+    // ---------------- move ----------------
+
+    MyString(MyString&& other) noexcept
+        : size_(other.size_), capacity_(other.capacity_), data(other.data)
+    {
+        other.data = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
+    }
+
+    MyString& operator=(MyString&& other) noexcept {
+        if (this == &other) return *this;
+
+        if (data) {
+            for (size_t i = 0; i < size_ + 1; i++) {
+                alloc.destroy(data + i);
+            }
+            alloc.deallocate(data, capacity_ + 1);
+        }
+
+        data = other.data;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+
+        other.data = nullptr;
+        other.size_ = 0;
+        other.capacity_ = 0;
+
+        return *this;
+    }
+
+    // ---------------- destructor ----------------
+
+    ~MyString() {
+        if (!data) return;
+
+        for (size_t i = 0; i < size_ + 1; i++) {
+            alloc.destroy(data + i);
+        }
+
+        alloc.deallocate(data, capacity_ + 1);
+    }
+
+    // ---------------- capacity ----------------
+
+    size_t size() const { return size_; }
+    size_t length() const { return size_; }
+    size_t capacity() const { return capacity_; }
+
+    bool empty() const { return size_ == 0; }
+
+    // ---------------- modifiers ----------------
+
+    void reserve(size_t newCapacity) {
+        if (newCapacity <= capacity_) return;
+        reallocate(newCapacity);
+    }
+
+    void resize(size_t n) {
+        if (n < size_) {
+            size_ = n;
+            data[size_] = '\0';
+            return;
+        }
+
+        if (n > size_) {
+            reserve(n);
+
+            for (size_t i = size_; i < n; i++) {
+                alloc.construct(data + i, '\0');
+            }
+
+            size_ = n;
+            data[size_] = '\0';
+        }
+    }
+
+    // ---------------- access ----------------
+
+    const char* c_str() const {
+        return data ? data : "";
+    }
+
+    char& operator[](size_t i) {
+        return data[i];
+    }
+
+    const char& operator[](size_t i) const {
+        return data[i];
+    }
+};
+
+int main() {
+    std::cout << "=== Constructor test ===\n";
+    MyString s1("Hello");
+    MyString s2("World");
+
+    std::cout << "s1: " << s1.c_str() << "\n";
+    std::cout << "s2: " << s2.c_str() << "\n\n";
+
+    std::cout << "=== Copy constructor ===\n";
+    MyString s3 = s1;
+    std::cout << "s3: " << s3.c_str() << "\n\n";
+
+    std::cout << "=== Copy assignment ===\n";
+    s3 = s2;
+    std::cout << "s3: " << s3.c_str() << "\n\n";
+
+    std::cout << "=== Move constructor ===\n";
+    MyString s4 = std::move(s2);
+    std::cout << "s4: " << s4.c_str() << "\n";
+    std::cout << "s2 (moved-from): " << s2.c_str() << "\n\n";
+
+    std::cout << "=== Move assignment ===\n";
+    MyString s5;
+    s5 = std::move(s1);
+    std::cout << "s5: " << s5.c_str() << "\n";
+    std::cout << "s1 (moved-from): " << s1.c_str() << "\n\n";
+
+    std::cout << "=== Resize test (grow) ===\n";
+    s5.resize(10);
+    std::cout << "s5: " << s5.c_str() << "\n";
+    std::cout << "size: " << s5.size() << "\n\n";
+
+    std::cout << "=== Resize test (shrink) ===\n";
+    s5.resize(3);
+    std::cout << "s5: " << s5.c_str() << "\n";
+    std::cout << "size: " << s5.size() << "\n\n";
+
+    std::cout << "=== Reserve test ===\n";
+    s5.reserve(100);
+    std::cout << "capacity: " << s5.capacity() << "\n\n";
+
+    std::cout << "=== operator[] test ===\n";
+    s5[0] = 'h';
+    s5[1] = 'i';
+    std::cout << "s5: " << s5.c_str() << "\n\n";
+
+    std::cout << "=== empty test ===\n";
+    MyString emptyStr;
+    std::cout << "emptyStr empty? " << emptyStr.empty() << "\n";
+
+    return 0;
+}
