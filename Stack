@@ -1,0 +1,200 @@
+#include <iostream>
+
+template<typename T>
+class MyAllocator {
+    public:
+    using value_type = T;
+    MyAllocator() = default;
+
+    T* allocate(size_t n) {
+        return static_cast<T*>(::operator new(n * sizeof(T)));
+    }
+    void deallocate(T* p , size_t) {
+        ::operator delete(p);
+    }
+
+    template<typename... Args>
+    void construct(T* p , Args&&... args) {
+        ::new(p) T(std::forward<Args>(args)...);
+    }
+    void destroy(T* p) {
+        p->~T();
+    }
+};
+
+template<typename T>
+class MyStack {
+private:
+    T* data;
+    size_t size_;
+    size_t capacity_;
+    MyAllocator<T> alloc;
+
+    void reallocate(size_t newSize) {
+        T* newData = alloc.allocate(newSize);
+
+        for (int i = 0 ; i < size_ ; i++) {
+            alloc.construct(newData + i , std::move(data[i]) );
+        }
+        for (int i = 0 ; i < size_ ; i++) {
+            alloc.destroy(data + i);
+        }
+        if (data) {
+            alloc.deallocate(data, capacity_);
+        }
+        data = newData;
+        capacity_ = newSize;
+    }
+public:
+    MyStack(): data(nullptr) , size_(0) , capacity_(0) {}
+
+    MyStack(const MyStack& rhs):data(nullptr) , size_(0) , capacity_(0) {
+        if (rhs.size_ == 0 ) return;
+
+        data = alloc.allocate(rhs.size_);
+        for (int i = 0 ; i < rhs.size_ ; i++) {
+            alloc.construct(data + i, rhs.data[i]);
+        }
+        size_ = rhs.size_;
+        capacity_ = rhs.capacity_;
+    }
+
+    MyStack(MyStack&& other)noexcept {
+
+        data = other.data;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+
+        other.size_ = 0;
+        other.capacity_ = 0;
+        other.data = nullptr;
+    }
+
+    MyStack& operator=(const MyStack& other) {
+        if (&other == this) return *this;
+
+        for (int i = 0 ; i < size_ ; i++) {
+            alloc.destroy(data + i);
+        }
+        if (data) {
+            alloc.deallocate(data , capacity_);
+        }
+        data = nullptr;
+        capacity_ = 0;
+        size_ = 0;
+
+        if (other.size_ == 0) return *this;
+
+        data = alloc.allocate(other.capacity_);
+        capacity_ = other.capacity_;
+        size_ = other.size_;
+        for (int i = 0 ; i < other.size_ ; i++) {
+            alloc.construct(data + i, other.data[i]);
+        }
+        return *this;
+    }
+
+    MyStack& operator=(MyStack&& other) noexcept {
+        if (&other == this) return *this;
+        for (int i = 0 ; i < size_ ; i++) {
+            alloc.destroy(data + i);
+        }
+        if (data) {
+            alloc.deallocate(data , capacity_);
+        }
+
+        capacity_ = other.capacity_;
+        size_ = other.size_;
+        data = other.data;
+
+        other.data = nullptr;
+        other.capacity_ = 0;
+        other.size_ = 0;
+
+        return *this;
+    }
+
+    ~MyStack() {
+        for (int i = 0 ; i < size_ ; i++) {
+            alloc.destroy(data + i);
+        }
+        if (data) {
+            alloc.deallocate(data , capacity_);
+        }
+    }
+
+    void push(const T& value) {
+        if (size_ == capacity_) {
+            reallocate(2 * capacity_);
+        }
+        alloc.construct(data + size_, value);
+        size_++;
+    }
+
+    void push(T&& value) {
+        if (size_ == capacity_) {
+            size_t newCapacity  = capacity_ == 0 ? 1 : 2 * capacity_;
+            reallocate(newCapacity);
+        }
+        alloc.construct(data + size_, value);
+        size_++;
+    }
+
+    bool empty() {
+        return size_ == 0;
+    }
+    void pop() {
+        if (empty()) {
+            return;
+        }
+        alloc.destroy(data + size_ - 1);
+        size_--;
+    }
+
+    T& top() {
+        if (empty()) {
+            throw std::out_of_range("Stack is empty");
+        }
+        return data[size_ - 1];
+    }
+
+    const T& top() const {
+        if (empty()) {
+            throw std::out_of_range("Stack is empty");
+        }
+        return data[size_ - 1];
+    }
+    size_t size() const {
+        return size_;
+    }
+};
+
+#include <iostream>
+#include <new>
+#include <stdexcept>
+#include <utility>
+
+
+// ================= TEST =================
+int main() {
+    MyStack<int> st;
+
+    st.push(10);
+    st.push(20);
+    st.push(30);
+
+    std::cout << "Top: " << st.top() << "\n"; // 30
+
+    st.pop();
+    std::cout << "Top after pop: " << st.top() << "\n"; // 20
+
+    // copy
+    MyStack<int> st2 = st;
+    std::cout << "Copy top: " << st2.top() << "\n";
+
+    // move
+    MyStack<int> st3 = std::move(st);
+    std::cout << "Moved top: " << st3.top() << "\n";
+
+    return 0;
+}
